@@ -12,6 +12,9 @@ from tt.widgets.positions import PositionsWidget
 from tt.widgets.portfolio import PortfolioWidget
 from tt.widgets.quote import QuoteWidget
 from tt.widgets.news import NewsWidget
+from tt.screens.cheatsheet import CheatsheetScreen
+from tt.themes import THEMES, THEME_NAMES
+from tt import config
 
 load_dotenv()
 
@@ -55,7 +58,17 @@ class TradingApp(App):
         Binding("4", "goto_tab(3)", "Portfolio", show=False),
         Binding("5", "goto_tab(4)", "Quote", show=False),
         Binding("6", "goto_tab(5)", "News", show=False),
+        # Theme + help
+        Binding("t", "cycle_theme", "Theme"),
+        Binding("question_mark", "cheatsheet", "Help"),
     ]
+
+    def on_mount(self) -> None:
+        # Register custom themes and apply the persisted choice.
+        for theme in THEMES:
+            self.register_theme(theme)
+        active = config.get_active_theme()
+        self.theme = active if active in THEME_NAMES else THEME_NAMES[0]
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -94,6 +107,25 @@ class TradingApp(App):
     def action_goto_tab(self, index: int) -> None:
         if 0 <= index < len(_TABS):
             self.query_one(TabbedContent).active = _TABS[index]
+
+    # ── Theme + help ───────────────────────────────────────────────────
+
+    def action_cycle_theme(self) -> None:
+        try:
+            idx = THEME_NAMES.index(self.theme)
+        except ValueError:
+            idx = -1
+        new_theme = THEME_NAMES[(idx + 1) % len(THEME_NAMES)]
+        self.theme = new_theme
+        config.save_active_theme(new_theme)
+        self.notify(f"Theme: {new_theme}", timeout=2)
+
+    def action_cheatsheet(self) -> None:
+        # Toggle: don't stack multiple copies of the modal.
+        if isinstance(self.screen, CheatsheetScreen):
+            self.pop_screen()
+        else:
+            self.push_screen(CheatsheetScreen())
 
     # ── Cursor movement (j/k) ──────────────────────────────────────────
 

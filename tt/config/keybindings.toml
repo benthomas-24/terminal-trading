@@ -1,0 +1,45 @@
+# Terminal Trading — keybinding cheatsheet
+#
+# This file only controls what the in-app cheatsheet (press `?`) DISPLAYS.
+# Edit the descriptions, add rows, or reorder them to taste. To override the
+# bundled defaults, copy this file to:
+#
+#   ~/.config/terminal-trading/keybindings.toml
+#
+# Each entry is a [[bindings]] table with `key` and `description`.
+
+[[bindings]]
+key = "h  /  l"
+description = "Previous / next tab"
+
+[[bindings]]
+key = "1 – 6"
+description = "Jump to Home, Account, Positions, Portfolio, Quote, News"
+
+[[bindings]]
+key = "j  /  k"
+description = "Move down / up within a table or list"
+
+[[bindings]]
+key = "tab  /  shift+tab"
+description = "Cycle focus between widgets"
+
+[[bindings]]
+key = "enter"
+description = "Open selected news article / submit symbol search"
+
+[[bindings]]
+key = "r"
+description = "Refresh the active tab"
+
+[[bindings]]
+key = "t"
+description = "Cycle visual theme"
+
+[[bindings]]
+key = "?"
+description = "Toggle this cheatsheet"
+
+[[bindings]]
+key = "q"
+description = "Quit"
