@@ -10,7 +10,8 @@ View your account balance, positions, portfolio, and live quotes — all from th
 
 ## Requirements
 
-- Python 3.11+
+- [uv](https://docs.astral.sh/uv/) — `curl -LsSf https://astral.sh/uv/install.sh | sh`
+- Python 3.11+ (uv manages this automatically)
 - A [Public.com](https://public.com) account with API access enabled
 
 ---
@@ -37,7 +38,7 @@ cp .env.example .env
 **3. Install dependencies**
 
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 ---
@@ -45,7 +46,7 @@ pip install -r requirements.txt
 ## Running
 
 ```bash
-python -m tt
+uv run tt
 ```
 
 ---
