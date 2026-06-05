@@ -32,11 +32,19 @@ def _secret() -> str:
     return secret
 
 
-async def _fetch_token() -> str:
+async def _fetch_token(validity_minutes: int = 1440) -> str:
+    """Exchange PUBLIC_API_SECRET for a short-lived JWT access token."""
     async with httpx.AsyncClient() as client:
         resp = await client.post(
-            f"{BASE_URL}/userapigateway/personal/access-tokens",
-            headers={"Authorization": f"Bearer {_secret()}"},
+            f"{BASE_URL}/userapiauthservice/personal/access-tokens",
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "public-dev-docs",
+            },
+            json={
+                "secret": _secret(),
+                "validityInMinutes": validity_minutes,
+            },
         )
         if not resp.is_success:
             raise AuthError(
@@ -44,9 +52,9 @@ async def _fetch_token() -> str:
             )
         data = resp.json()
         token = (
-            data.get("access_token")
+            data.get("accessToken")
+            or data.get("access_token")
             or data.get("token")
-            or data.get("accessToken")
         )
         if not token:
             raise AuthError(
