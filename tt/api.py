@@ -1,5 +1,7 @@
 import os
+import asyncio
 import logging
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 import httpx
@@ -162,6 +164,7 @@ def _normalize_positions(raw: dict) -> list[dict]:
     for p in raw.get("positions", []):
         instrument = p.get("instrument", {})
         cost_basis = p.get("costBasis") or {}
+        daily_gain = p.get("positionDailyGain") or {}
         positions.append(
             {
                 "symbol": instrument.get("symbol"),
@@ -172,6 +175,8 @@ def _normalize_positions(raw: dict) -> list[dict]:
                 "currentValue": p.get("currentValue"),
                 "unrealizedPnl": cost_basis.get("gainValue"),
                 "unrealizedPnlPercent": cost_basis.get("gainPercentage"),
+                "dayChange": daily_gain.get("gainValue"),
+                "dayChangePercent": daily_gain.get("gainPercentage"),
                 "lastPrice": (p.get("lastPrice") or {}).get("lastPrice"),
             }
         )
@@ -250,3 +255,196 @@ async def get_quote(symbol: str) -> dict:
             }
 
     raise ApiError(404, f"No quote found for '{symbol}'.")
+
+
+# ── Market data via yfinance (charts, history, news, search) ─────────
+#
+# yfinance is synchronous/blocking, so every public coroutine here wraps
+# the blocking work in asyncio.to_thread to keep the Textual event loop
+# responsive. yfinance itself is imported lazily inside the worker so app
+# startup stays fast.
+
+
+# yfinance period strings keyed by the timeframe labels we show in the UI.
+PERIODS = {
+    "1D": "1d",
+    "1W": "5d",
+    "1M": "1mo",
+    "3M": "3mo",
+    "1Y": "1y",
+}
+
+# Emoji glyphs used as dropdown/news icons, keyed by yfinance quoteType.
+TYPE_ICONS = {
+    "EQUITY": "📈",
+    "ETF": "📊",
+    "CRYPTOCURRENCY": "🪙",
+    "CRYPTO": "🪙",
+    "INDEX": "📉",
+    "CURRENCY": "💱",
+    "MUTUALFUND": "🏦",
+    "FUTURE": "⏳",
+    "OPTION": "🎲",
+}
+
+
+def _yf_symbol(symbol: str, asset_type: str | None = None) -> str:
+    """Map an internal symbol to the form yfinance expects.
+
+    Crypto on Public.com is a bare ticker (e.g. ``BTC``); yfinance needs the
+    ``BTC-USD`` pairing.
+    """
+    symbol = symbol.upper()
+    if asset_type and asset_type.upper().startswith("CRYPTO") and "-" not in symbol:
+        return f"{symbol}-USD"
+    return symbol
+
+
+def icon_for(asset_type: str | None) -> str:
+    return TYPE_ICONS.get((asset_type or "").upper(), "•")
+
+
+def _interval_for(period: str) -> str:
+    """Pick a sensible candle interval for intraday vs longer ranges."""
+    return "5m" if period == "1d" else "1d"
+
+
+def _history_sync(symbol: str, period: str) -> list[tuple[str, float]]:
+    import yfinance as yf
+
+    df = yf.Ticker(symbol).history(period=period, interval=_interval_for(period))
+    if df.empty:
+        return []
+    closes = df["Close"].dropna()
+    fmt = "%H:%M" if period == "1d" else "%m/%d"
+    return [(idx.strftime(fmt), float(val)) for idx, val in closes.items()]
+
+
+async def get_price_history(
+    symbol: str, period: str = "1mo", asset_type: str | None = None
+) -> list[tuple[str, float]]:
+    """Closing-price series as (label, price) tuples for charting."""
+    sym = _yf_symbol(symbol, asset_type)
+    return await asyncio.to_thread(_history_sync, sym, period)
+
+
+def _portfolio_history_sync(
+    holdings: list[tuple[str, float]], period: str
+) -> list[tuple[str, float]]:
+    """Reconstruct total portfolio value over time from per-holding closes.
+
+    holdings is a list of (yfinance_symbol, quantity). Each symbol's close
+    series is multiplied by its quantity and summed across a shared, forward
+    filled date index so equities (no weekends) and crypto (every day) align.
+    """
+    import yfinance as yf
+    import pandas as pd
+
+    series = []
+    interval = _interval_for(period)
+    for sym, qty in holdings:
+        try:
+            df = yf.Ticker(sym).history(period=period, interval=interval)
+            if df.empty:
+                continue
+            series.append(df["Close"].rename(sym) * qty)
+        except Exception:
+            continue
+
+    if not series:
+        return []
+
+    # ffill carries each holding's last close forward; dropna() then keeps only
+    # dates where *every* holding has a value, avoiding a misleading ramp at the
+    # start where some series haven't begun yet.
+    combined = pd.concat(series, axis=1).sort_index().ffill().dropna()
+    totals = combined.sum(axis=1)
+    fmt = "%H:%M" if period == "1d" else "%m/%d"
+    return [(idx.strftime(fmt), float(val)) for idx, val in totals.items()]
+
+
+async def get_portfolio_history(period: str = "1mo") -> list[tuple[str, float]]:
+    """Total portfolio value over time, rebuilt from current holdings."""
+    positions = await get_positions()
+    holdings = [
+        (_yf_symbol(p["symbol"], p.get("type")), float(p.get("quantity") or 0))
+        for p in positions
+        if p.get("symbol") and float(p.get("quantity") or 0) > 0
+    ]
+    if not holdings:
+        return []
+    return await asyncio.to_thread(_portfolio_history_sync, holdings, period)
+
+
+def _news_sync(symbols: list[str], limit: int) -> list[dict]:
+    import yfinance as yf
+
+    articles: dict[str, dict] = {}
+    for symbol in symbols:
+        try:
+            items = yf.Ticker(symbol).news or []
+        except Exception:
+            continue
+        for item in items:
+            content = item.get("content") or item
+            url = (content.get("canonicalUrl") or {}).get("url") or (
+                content.get("clickThroughUrl") or {}
+            ).get("url")
+            title = content.get("title")
+            if not url or not title or url in articles:
+                continue
+            articles[url] = {
+                "symbol": symbol.replace("-USD", ""),
+                "title": title,
+                "url": url,
+                "publisher": (content.get("provider") or {}).get("displayName", ""),
+                "published": content.get("pubDate") or content.get("displayTime") or "",
+                "summary": content.get("summary") or content.get("description") or "",
+            }
+
+    def _sort_key(a: dict):
+        try:
+            return datetime.fromisoformat(a["published"].replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return datetime.min.replace(tzinfo=timezone.utc)
+
+    ordered = sorted(articles.values(), key=_sort_key, reverse=True)
+    return ordered[:limit]
+
+
+async def get_news(symbols: list[str], limit: int = 20) -> list[dict]:
+    """Recent, deduped news for the given symbols, newest first."""
+    if not symbols:
+        return []
+    return await asyncio.to_thread(_news_sync, symbols, limit)
+
+
+def _search_sync(query: str, limit: int) -> list[dict]:
+    import yfinance as yf
+
+    try:
+        results = yf.Search(query, max_results=limit).quotes
+    except Exception:
+        return []
+    out = []
+    for q in results:
+        symbol = q.get("symbol")
+        if not symbol:
+            continue
+        out.append(
+            {
+                "symbol": symbol,
+                "name": q.get("shortname") or q.get("longname") or symbol,
+                "type": q.get("quoteType", ""),
+                "exchange": q.get("exchange", ""),
+            }
+        )
+    return out
+
+
+async def search_symbols(query: str, limit: int = 8) -> list[dict]:
+    """Symbol search for autocomplete: [{symbol, name, type, exchange}]."""
+    query = query.strip()
+    if not query:
+        return []
+    return await asyncio.to_thread(_search_sync, query, limit)

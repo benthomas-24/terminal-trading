@@ -6,19 +6,23 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Header, Footer, TabbedContent, TabPane, DataTable
 
+from tt.widgets.home import HomeWidget
 from tt.widgets.account import AccountWidget
 from tt.widgets.positions import PositionsWidget
 from tt.widgets.portfolio import PortfolioWidget
 from tt.widgets.quote import QuoteWidget
+from tt.widgets.news import NewsWidget
 
 load_dotenv()
 
 # Ordered list of tab IDs — drives h/l cycling and 1-N shortcuts.
 _TABS = [
+    "tab-home",
     "tab-account",
     "tab-positions",
     "tab-portfolio",
     "tab-quote",
+    "tab-news",
 ]
 
 
@@ -45,15 +49,19 @@ class TradingApp(App):
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
         # Direct tab jumps
-        Binding("1", "goto_tab(0)", "Account", show=False),
-        Binding("2", "goto_tab(1)", "Positions", show=False),
-        Binding("3", "goto_tab(2)", "Portfolio", show=False),
-        Binding("4", "goto_tab(3)", "Quote", show=False),
+        Binding("1", "goto_tab(0)", "Home", show=False),
+        Binding("2", "goto_tab(1)", "Account", show=False),
+        Binding("3", "goto_tab(2)", "Positions", show=False),
+        Binding("4", "goto_tab(3)", "Portfolio", show=False),
+        Binding("5", "goto_tab(4)", "Quote", show=False),
+        Binding("6", "goto_tab(5)", "News", show=False),
     ]
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with TabbedContent():
+            with TabPane("🏠 Home", id="tab-home"):
+                yield HomeWidget(id="home")
             with TabPane("Account", id="tab-account"):
                 yield AccountWidget(id="account")
             with TabPane("Positions", id="tab-positions"):
@@ -62,6 +70,8 @@ class TradingApp(App):
                 yield PortfolioWidget(id="portfolio")
             with TabPane("Quote", id="tab-quote"):
                 yield QuoteWidget(id="quote")
+            with TabPane("📰 News", id="tab-news"):
+                yield NewsWidget(id="news")
         yield Footer()
 
     # ── Tab navigation ─────────────────────────────────────────────────
@@ -105,14 +115,17 @@ class TradingApp(App):
 
     def action_refresh(self) -> None:
         active = self.query_one(TabbedContent).active
-        if active == "tab-account":
-            self.query_one(AccountWidget).refresh_data()
-        elif active == "tab-positions":
-            self.query_one(PositionsWidget).refresh_data()
-        elif active == "tab-portfolio":
-            self.query_one(PortfolioWidget).refresh_data()
-        elif active == "tab-quote":
-            self.query_one(QuoteWidget).refresh_data()
+        widget_by_tab = {
+            "tab-home": HomeWidget,
+            "tab-account": AccountWidget,
+            "tab-positions": PositionsWidget,
+            "tab-portfolio": PortfolioWidget,
+            "tab-quote": QuoteWidget,
+            "tab-news": NewsWidget,
+        }
+        widget_cls = widget_by_tab.get(active)
+        if widget_cls is not None:
+            self.query_one(widget_cls).refresh_data()
 
 
 def main() -> None:
