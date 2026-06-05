@@ -78,23 +78,30 @@ async def _invalidate_token() -> None:
     _cached_token = None
 
 
+_HEADERS = {
+    "Content-Type": "application/json",
+    "User-Agent": "public-dev-docs",
+}
+
+
 async def _get(path: str, params: dict | None = None) -> dict:
     token = await _get_token()
+    headers = {**_HEADERS, "Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient() as client:
         resp = await client.get(
             f"{BASE_URL}{path}",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
             params=params or {},
         )
         if resp.status_code == 401:
             await _invalidate_token()
             token = await _get_token()
-            async with httpx.AsyncClient() as client2:
-                resp = await client2.get(
-                    f"{BASE_URL}{path}",
-                    headers={"Authorization": f"Bearer {token}"},
-                    params=params or {},
-                )
+            headers = {**_HEADERS, "Authorization": f"Bearer {token}"}
+            resp = await client.get(
+                f"{BASE_URL}{path}",
+                headers=headers,
+                params=params or {},
+            )
         if not resp.is_success:
             raise ApiError(resp.status_code, resp.text)
         return resp.json()
