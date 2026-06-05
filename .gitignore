@@ -2,15 +2,10 @@
 .env
 *.env
 
-# Rust build artifacts
-cli/target/
-
 # Python artifacts
 __pycache__/
 *.pyc
 *.pyo
-server/__pycache__/
-server/routes/__pycache__/
 .venv/
 venv/
 *.egg-info/
